@@ -25,6 +25,7 @@ import '../../models/shortcut_model.dart';
 import '../../utils/image.dart';
 import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
+import '../android_keyboard_capture.dart';
 
 final initText = '1' * 1024;
 
@@ -102,6 +103,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   late final StreamSubscription<bool> keyboardSubscription;
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
+  bool _captureSystemKeys = false;
+  bool _captureForeground = true;
   var _showEdit = false; // use soft keyboard
 
   Worker? _waylandKeyboardGateWorker;
@@ -137,6 +140,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
     WakelockManager.enable(_uniqueKey);
     _physicalFocusNode.requestFocus();
+    if (isAndroid) _physicalFocusNode.addListener(_syncKeyboardCapture);
     HardwareKeyboard.instance.addHandler(_handleLocalKeyEvent);
     gFFI.inputModel.listenToMouse(true);
     gFFI.qualityMonitorModel.checkShowQualityMonitor(sessionId);
@@ -186,6 +190,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   @override
   Future<void> dispose() async {
+    if (isAndroid) {
+      _physicalFocusNode.removeListener(_syncKeyboardCapture);
+      _captureSystemKeys = false;
+      _syncKeyboardCapture();
+    }
     HardwareKeyboard.instance.removeHandler(_handleLocalKeyEvent);
     WidgetsBinding.instance.removeObserver(this);
     // Close the session up-front. `gFFI.close()` below only calls `sessionClose`
@@ -225,6 +234,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (isAndroid) {
+      _captureForeground = state == AppLifecycleState.resumed;
+      _syncKeyboardCapture();
+    }
     if (state == AppLifecycleState.resumed) {
       trySyncClipboard();
     }
@@ -586,8 +599,40 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   bool _handleLocalKeyEvent(KeyEvent event) => handleMobileLocalKeyEvent(event,
       remoteFocused: _physicalFocusNode.hasPrimaryFocus, inputModel: inputModel);
 
+  void _syncKeyboardCapture() {
+    if (!isAndroid) return;
+    unawaited(AndroidKeyboardCapture.update(
+      enabled: _captureSystemKeys,
+      foreground: _captureForeground,
+      focused: _physicalFocusNode.hasPrimaryFocus,
+      connected: gFFI.ffiModel.pi.isSet.isTrue,
+      keyboardPermitted: inputModel.keyboardPerm,
+      viewOnly: inputModel.isViewOnly,
+    ).catchError((Object error) {
+      debugPrint('Android keyboard capture: $error');
+    }));
+  }
+
+  Future<void> _toggleKeyboardCapture() async {
+    if (!_captureSystemKeys) {
+      final serviceOpen = await AndroidKeyboardCapture.serviceOpen;
+      if (!mounted) return;
+      if (!serviceOpen) {
+        showToast(translate('Enable service'));
+        await gFFI.invokeMethod(
+            'start_action', 'android.settings.ACCESSIBILITY_SETTINGS');
+        return;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _captureSystemKeys = !_captureSystemKeys);
+    if (_captureSystemKeys) _physicalFocusNode.requestFocus();
+    _syncKeyboardCapture();
+  }
+
   Widget getRawPointerAndKeyBody(Widget child) {
     final ffiModel = Provider.of<FfiModel>(context);
+    if (isAndroid) _syncKeyboardCapture();
     return RawPointerMouseRegion(
       cursor: ffiModel.keyboard ? SystemMouseCursors.none : MouseCursor.defer,
       inputModel: inputModel,
@@ -627,7 +672,18 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                         setState(() => _showEdit = false);
                         showOptions(context, widget.id, gFFI.dialogManager);
                       },
-                    )
+                    ),
+                    if (isAndroid)
+                      IconButton(
+                        tooltip: 'Win / Alt+Tab / Esc',
+                        color: _captureSystemKeys ? Colors.amber : Colors.white,
+                        icon: Icon(_captureSystemKeys
+                            ? Icons.keyboard_alt
+                            : Icons.keyboard_alt_outlined),
+                        onPressed: ffiModel.keyboard && !ffiModel.viewOnly
+                            ? _toggleKeyboardCapture
+                            : null,
+                      ),
                   ] +
                   (isWebDesktop || ffiModel.viewOnly || !ffiModel.keyboard
                       ? []

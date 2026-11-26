@@ -81,6 +81,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        KeyboardCapture.attach(this, flutterEngine.dartExecutor.binaryMessenger)
         if (MainService.isReady) {
             Intent(activity, MainService::class.java).also {
                 bindService(it, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -118,6 +119,16 @@ class MainActivity : FlutterActivity() {
             findViewById<FlutterView>(FlutterActivity.FLUTTER_VIEW_ID)?.requestFocus()
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        if (!hasFocus) KeyboardCapture.release()
+        super.onWindowFocusChanged(hasFocus)
+    }
+
+    override fun onPause() {
+        KeyboardCapture.setEnabled(false)
+        super.onPause()
     }
 
     private fun requestMediaProjection() {
@@ -254,6 +265,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        KeyboardCapture.detach(this)
         documentPicker.close()
         Log.e(logTag, "onDestroy")
         // The process can outlive the UI whenever something keeps it alive:

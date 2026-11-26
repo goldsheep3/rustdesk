@@ -774,6 +774,8 @@ class InputService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
     }
 
+    override fun onKeyEvent(event: KeyEventAndroid): Boolean = KeyboardCapture.onKeyEvent(event)
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         ctx = this
@@ -783,6 +785,9 @@ class InputService : AccessibilityService() {
             info.flags = FLAG_INPUT_METHOD_EDITOR or FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         } else {
             info.flags = FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        if (KeyboardCapture.enabled) {
+            info.flags = info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         }
         setServiceInfo(info)
         fakeEditTextForTextStateCalculation = EditText(this)
@@ -795,6 +800,7 @@ class InputService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        KeyboardCapture.setEnabled(false)
         ctx = null
         // Keep this fallback even though onUnbind usually notifies first.
         notifyInputState()
@@ -802,6 +808,7 @@ class InputService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        KeyboardCapture.setEnabled(false)
         ctx = null
         notifyInputState()
         return super.onUnbind(intent)
